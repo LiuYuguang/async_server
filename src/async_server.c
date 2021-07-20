@@ -25,59 +25,59 @@
 #define BUF_MIN (1<<8)  //256
 #define BUF_MAX (1<<15) //32768
 
-//对于remote init->read->wait(queue write)->wait(queue read)->write
-//对于local init->wait->read/write
+//对于remote, 流程为read->wait(queue write)->wait(queue read)->write
+//对于local, 流程为read/write
 enum app_status_t{
-    app_status_read   = (1<<0),//等待读，在epoll内
-    app_status_write  = (1<<1),//等待写，在epoll内
-    app_status_wait   = (1<<2),//等待某个事件处理完(对于remote，是等待local的数据；对于local，是等待remote或者内部处理完数据)，仍然在epoll内，只不过不监听读写事件，而是其他错误事件
-    app_status_close  = (1<<3),//fd应被关闭，不在epoll内
+    app_status_read   = (1<<0),
+    app_status_write  = (1<<1),
+    app_status_wait   = (1<<2),
+    app_status_close  = (1<<3),
 };
 
 typedef struct app_s app_t;
 // typedef struct async_server_s async_server_t;
 
 struct app_s{
-    int app_fd;
-    enum data_type_t app_data_type;//数据类型
-    enum app_status_t app_status;//状态
-    int app_errno;
-    ssize_t (*app_read_handler)(app_t* ,async_server_t*);  //read的handler
-    ssize_t (*app_write_handler)(app_t* ,async_server_t*); //write的handler
+    int app_fd;                                            // fd
+    enum data_type_t app_data_type;                        // 数据类型
+    enum app_status_t app_status;                          // 状态
+    int app_errno;                                         // 错误码
+    ssize_t (*app_read_handler)(app_t* ,async_server_t*);  // read的handler
+    ssize_t (*app_write_handler)(app_t* ,async_server_t*); // write的handler
 
-    uint64_t app_read_timestamp; //开始读的时间
-    uint64_t app_write_timestamp; //开始写的时间
-    uint64_t app_wait_timestamp; //开始等待的时间
-    uint64_t app_close_timestamp; //关闭的时间
+    uint64_t app_read_timestamp;                           // 开始读的时间
+    uint64_t app_write_timestamp;                          // 开始写的时间
+    uint64_t app_wait_timestamp;                           // 开始等待的时间
+    uint64_t app_close_timestamp;                          // 关闭的时间
 
-    unsigned char *app_buf;
-    size_t app_buf_len;
-    size_t app_buf_cap;
+    unsigned char *app_buf;                                // buf
+    size_t app_buf_len;                                    // buf长度
+    size_t app_buf_cap;                                    // buf容量
 
-    int app_read_timeout;
-    int app_write_timeout;
+    int app_read_timeout;                                  // 超时时间, ms为单位, -1为infinite
+    int app_write_timeout;                                 // 超时时间, ms为单位, -1为infinite
     
     union app_parser_t{
         http_parser http;
         iso8583_parser iso8583;
         local_protocol_parser local_protocol;            
-    }app_parser;
+    }app_parser;                                           // 
 
-    rbtree_node_t id_rbtree_node;//id作为key
-    rbtree_node_t timer_rbtree_node;//到期时间作为key
-    queue_t task_worker_queue_node;//队列节点,对于remote，是task；对于local，是worker
+    rbtree_node_t id_rbtree_node;                          // key为id
+    rbtree_node_t timer_rbtree_node;                       // key为到期时间
+    queue_t task_worker_queue_node;                        // 队列节点,对于remote，是task队列；对于local，是worker队列
 };
 
 struct async_server_s{
-    int epfd;//epoll根
-    rbtree_t id_rbtree;//id根
-    rbtree_t timer_rbtree;//定时器根
-    queue_t worker;//待分配worker队列
-    queue_t task;//待处理任务队列
-    int dummyfd;//for run out of file descriptors (because of resource limits)
-    uint64_t id;
-    char *id_file;
-    char *log_file;
+    int epfd;                                              // epoll根
+    rbtree_t id_rbtree;                                    // id根
+    rbtree_t timer_rbtree;                                 // 定时器根
+    queue_t worker;                                        // 待分配worker队列
+    queue_t task;                                          // 待处理任务队列
+    int dummyfd;                                           // for run out of file descriptors (because of resource limits)
+    uint64_t id;                                           // id
+    char *id_file;                                         // id文件, 初始化读id文件获取id, 关闭server写入id文件
+    char *log_file;                                        // log文件
     ssize_t (*write_log)(const char* file_name,const void *buf, size_t n);
 };
 
