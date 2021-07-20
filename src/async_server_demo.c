@@ -1,11 +1,24 @@
 #include <stdio.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/un.h>     //for struct sockaddr_un
 #include "async_server.h"
 
+ssize_t write_log(const char* file_name,const void *buf, size_t n){
+    int fd = open(file_name,O_WRONLY|O_CREAT|O_APPEND,0664);
+    if(fd == -1){
+        return -1;
+    }
+    ssize_t ret = write(fd,buf,n);
+    close(fd);
+    return ret;
+}
 
 int main(){
     async_server_t* server = server_create();
+
+    server_set_id_file(server,"./id_file");
+    server_set_log_file(server,"./log",write_log);
 
     struct sockaddr_in sin;
     sin.sin_family = AF_INET;

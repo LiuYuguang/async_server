@@ -87,6 +87,41 @@ uint64_t localtime(){
     return tv.tv_sec*1000 + tv.tv_usec/1000;
 }
 
+static ssize_t _write_log(app_t *app,async_server_t *server){
+    static char buf[512] = {0},*p;
+    static int len;
+    memset(buf,0,sizeof(buf));
+
+    p = buf;
+    len = sprintf(p,"id[%lu] errno[%d][%s]",app->id_rbtree_node.key,app->app_errno,strerror(app->app_errno));
+    p += len;
+
+    if((app->app_status&app_status_read)||app->app_read_timestamp!=0){
+        len = sprintf(p,", read[%lu]",app->app_read_timestamp);
+        p += len;
+    }
+
+    if((app->app_status&app_status_wait)||app->app_wait_timestamp!=0){
+        len = sprintf(p,", wait[%lu]",app->app_wait_timestamp);
+        p += len;
+    }
+
+    if((app->app_status&app_status_write)||app->app_write_timestamp!=0){
+        len = sprintf(p,", write[%lu]",app->app_write_timestamp);
+        p += len;
+    }
+
+    if((app->app_status&app_status_close)||app->app_close_timestamp!=0){
+        len = sprintf(p,", close[%lu]",app->app_close_timestamp);
+        p += len;
+    }
+
+    *p++ = '\n';
+
+    len = p - buf;
+    return server->write_log(server->log_file,buf,len);
+}
+
 // --------------iso8583----------------------------
 ssize_t recv_iso8583_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
@@ -111,12 +146,14 @@ ssize_t recv_iso8583_cb(app_t *app,async_server_t *server){
 
         if(iso8583_parser_is_done(&app->app_parser.iso8583)){
             //已经读完数据，不再处于epoll，进入等待阶段
+            //更新epoll状态
             struct epoll_event ev = {0,{0}};
             int opt = EPOLL_CTL_MOD;
             ev.events = EPOLLERR|EPOLLHUP|EPOLLRDHUP;
             ev.data.ptr = app;
             epoll_ctl(server->epfd,opt,app->app_fd,&ev);
 
+            //更新状态
             app->app_status = app_status_wait;
             app->app_wait_timestamp = localtime();
 
@@ -182,7 +219,7 @@ ssize_t send_iso8583_cb(app_t *app,async_server_t *server){
     if(len > 0){
         //发送完毕
         app->app_errno =0;
-        app->app_close_timestamp = app->app_write_timeout;
+        app->app_close_timestamp = localtime();
         app->app_status |= app_status_close;
         return 0;
     }else{
@@ -318,8 +355,6 @@ ssize_t accept_iso8583_cb(app_t *app,async_server_t *server){
 
 // --------------http----------------------------
 ssize_t recv_http_cb(app_t *app,async_server_t *server){
-    size_t len;
-    
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -335,7 +370,7 @@ ssize_t recv_http_cb(app_t *app,async_server_t *server){
         }
     }
     
-    len = recv(app->app_fd,app->app_buf+app->app_buf_len, app->app_buf_cap-app->app_buf_len,0);
+    ssize_t len = recv(app->app_fd,app->app_buf+app->app_buf_len, app->app_buf_cap-app->app_buf_len,0);
     if(len > 0){
         len = http_parser_execute(&app->app_parser.http, &settings_default, app->app_buf+app->app_buf_len,len);
         app->app_buf_len += len;
@@ -349,12 +384,14 @@ ssize_t recv_http_cb(app_t *app,async_server_t *server){
         
         if(http_request_is_done(&app->app_parser.http)){
             //已经读完数据，不再处于epoll，进入等待阶段
+            //更新epoll状态
             struct epoll_event ev = {0,{0}};
             int opt = EPOLL_CTL_MOD;
             ev.events = EPOLLERR|EPOLLHUP|EPOLLRDHUP;
             ev.data.ptr = app;
             epoll_ctl(server->epfd,opt,app->app_fd,&ev);
 
+            //更新状态
             app->app_status = app_status_wait;
             app->app_wait_timestamp = localtime();
             
@@ -421,7 +458,7 @@ ssize_t send_http_cb(app_t *app,async_server_t *server){
     if(len > 0){
         //发送完毕
         app->app_errno =0;
-        app->app_close_timestamp = app->app_write_timeout;
+        app->app_close_timestamp = localtime();
         app->app_status |= app_status_close;
         return 0;
     }else{
@@ -583,38 +620,25 @@ ssize_t recv_local_protocol_cb(app_t *app,async_server_t *server){
             app->app_buf_len += len_parser;
             if(local_protocol_parser_is_done(&app->app_parser.local_protocol)){
                 //读完数据
-                //ipc头两位为长度
+                //local_protocol头两位为长度
                 local_protocol_data = (local_protocol_data_t *)(app->app_buf+sizeof(uint16_t));
-                local_protocol_data_size = app->app_buf_len - sizeof(uint16_t) - sizeof(local_protocol_data_t);
+                local_protocol_data_size = app->app_buf_len-sizeof(uint16_t)-sizeof(local_protocol_data_t);
 
                 //根据id查找原fd
                 rbtree_node_t *rbtree_node = rbtree_search(&server->id_rbtree,local_protocol_data->id);
                 if(rbtree_node != NULL){
                     //fd未被关闭，获得原ev
                     app_t* app_task = rbtree_data(rbtree_node,app_t,id_rbtree_node);
-                    if(local_protocol_data->data_type == data_type_iso8583){
-                        //8583前两位为长度
-                        if(app_task->app_buf_cap < local_protocol_data_size+sizeof(uint16_t)){
-                            app_task->app_buf_cap = local_protocol_data_size+sizeof(uint16_t);
-                            app_task->app_buf = realloc(app_task->app_buf,app_task->app_buf_cap);
-                        }
-                        if(app_task->app_buf != NULL){
-                            memcpy(app_task->app_buf + sizeof(uint16_t),local_protocol_data->data,local_protocol_data_size);
-                            *(uint16_t*)app_task->app_buf = htons(local_protocol_data_size);
-                            app_task->app_buf_len = sizeof(uint16_t) + local_protocol_data_size;
-                        }
-                    }else{
-                        if(app_task->app_buf_cap < local_protocol_data_size){
-                            app_task->app_buf_cap = local_protocol_data_size;
-                            app_task->app_buf = realloc(app_task->app_buf,app_task->app_buf_cap);
-                        }
-                        if(app_task->app_buf != NULL){
-                            memcpy(app_task->app_buf,local_protocol_data->data,local_protocol_data_size);
-                            app_task->app_buf_len = local_protocol_data_size;
-                        }
+                    if(app_task->app_buf_cap < local_protocol_data_size){
+                        app_task->app_buf_cap = local_protocol_data_size;
+                        app_task->app_buf = realloc(app_task->app_buf,app_task->app_buf_cap);
+                    }
+                    if(app_task->app_buf != NULL){
+                        memcpy(app_task->app_buf,local_protocol_data->data,local_protocol_data_size);
+                        app_task->app_buf_len = local_protocol_data_size;
                     }
 
-                    //原ev添加写事件，重新加入epoll，原本应该是处于waiting状态
+                    //原app添加写事件，重新加入epoll
                     struct epoll_event ev = {0,{0}};
                     int opt = EPOLL_CTL_MOD;
                     ev.events = EPOLLOUT|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
@@ -691,16 +715,10 @@ ssize_t send_local_protocol_cb(app_t *app,async_server_t *server){
     local_protocol_data->id = app_task->id_rbtree_node.key;
     local_protocol_data->clock = app_task->app_read_timestamp;
     local_protocol_data->data_type = app_task->app_data_type;
-    if(app_task->app_data_type == data_type_iso8583){
-        //8583前两位为长度,需要去掉
-        memcpy(local_protocol_data->data,app_task->app_buf+sizeof(uint16_t),app_task->app_buf_len-sizeof(uint16_t));
-        *(uint16_t*)buf = htons(sizeof(local_protocol_data_t)+app_task->app_buf_len-sizeof(uint16_t));
-        len = sizeof(local_protocol_data_t)+app_task->app_buf_len;//+sizeof(uint16_t)ipc头 - sizeof(uint16_t)8583头
-    }else{
-        memcpy(local_protocol_data->data,app_task->app_buf,app_task->app_buf_len);
-        *(uint16_t*)buf = htons(sizeof(local_protocol_data_t)+app_task->app_buf_len);
-        len = sizeof(uint16_t)+sizeof(local_protocol_data_t)+app_task->app_buf_len;
-    }
+
+    memcpy(local_protocol_data->data,app_task->app_buf,app_task->app_buf_len);
+    *(uint16_t*)buf = htons(sizeof(local_protocol_data_t)+app_task->app_buf_len);
+    len = sizeof(uint16_t)+sizeof(local_protocol_data_t)+app_task->app_buf_len;
     
     len = send(app->app_fd,buf,len,0);
     
@@ -934,10 +952,11 @@ ssize_t server_start_loop(async_server_t* server){
         node = rbtree_min(&server->timer_rbtree,server->timer_rbtree.root);
         if(node != NULL && node->key <= ltime){
             app = rbtree_data(node,app_t,timer_rbtree_node);
-            app->app_errno = ETIMEDOUT;
+            app->app_errno = ETIME;
             app->app_close_timestamp = localtime();
             app->app_status |= app_status_close;
-            //log...
+            
+            _write_log(app,server);
 
             //先获取下一个节点
             node = rbtree_next(&server->timer_rbtree,&app->timer_rbtree_node);
@@ -1009,7 +1028,7 @@ ssize_t server_start_loop(async_server_t* server){
             }
 
             if(app->app_status&app_status_close){
-                //log...
+                _write_log(app,server);
 
                 //删除epoll事件
                 epoll_ctl(server->epfd,EPOLL_CTL_DEL,app->app_fd,NULL);
