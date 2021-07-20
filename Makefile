@@ -2,16 +2,16 @@ CFLAGS := -O -DDEBUG -g
 INC    := -I./include
 CC     := gcc
 
-BIN    := main echo_server
+BIN    := async_server_demo echo_server_demo
 SRC    := $(wildcard src/*.c)
 OBJS   := $(patsubst src/%.c, obj/%.o, $(SRC))
 
 all: $(BIN)
 
-main: main.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
+async_server_demo: async_server_demo.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
 	$(CC) -o $@ $^
 
-echo_server: echo_server.o local_protocol.o
+echo_server_demo: echo_server_demo.o local_protocol.o
 	$(CC) -o $@ $^
 
 $(OBJS): obj/%.o : src/%.c
