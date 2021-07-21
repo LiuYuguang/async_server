@@ -1,12 +1,21 @@
-CFLAGS := -O -DDEBUG -g
-INC    := -I./include
-CC     := gcc
+CFLAGS       = -O -DDEBUG
+INC          = -I./include
+CC           = gcc
 
-BIN    := async_server_demo echo_server_demo
-SRC    := $(wildcard src/*.c)
-OBJS   := $(patsubst src/%.c, obj/%.o, $(SRC))
+INSTALL      ?= cp -a
+PREFIX       ?= /usr/local
+INCLUDE_PATH ?= include
+LIBRARY_PATH ?= lib
 
-all: $(BIN)
+INSTALL_INCLUDE_PATH = $(DESTDIR)$(PREFIX)/$(INCLUDE_PATH)
+INSTALL_LIBRARY_PATH = $(DESTDIR)$(PREFIX)/$(LIBRARY_PATH)
+
+BIN     = async_server_demo echo_server_demo
+SHARED  = libasync_server.so
+SRC     = $(wildcard src/*.c)
+OBJ     = $(patsubst src/%.c, obj/%.o, $(SRC))
+
+all: $(BIN) $(SHARED)
 
 async_server_demo: async_server_demo.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
 	$(CC) -o $@ $^
@@ -14,13 +23,25 @@ async_server_demo: async_server_demo.o async_server.o http_parser.o iso8583_pars
 echo_server_demo: echo_server_demo.o local_protocol.o
 	$(CC) -o $@ $^
 
-$(OBJS): obj/%.o : src/%.c
+libasync_server.so: async_server_demo.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
+	$(CC) -o $@ $^ -shared
+
+$(OBJ): obj/%.o : src/%.c
 	$(CC) -c $(CFLAGS) -o $@ $< $(INC)
 
-clean:
-	-rm $(OBJS) $(BIN)
+install:
+	mkdir -p $(INSTALL_LIBRARY_PATH) $(INSTALL_INCLUDE_PATH)
+	$(INSTALL) include/async_server.h $(INSTALL_INCLUDE_PATH)
+	$(INSTALL) $(SHARED) $(INSTALL_LIBRARY_PATH)
 
-.PHONY: all clean 
+uninstall:
+	$(RM) $(INSTALL_INCLUDE_PATH)/async_server.h
+	$(RM) $(INSTALL_LIBRARY_PATH)/$(SHARED)
+
+clean:
+	-rm $(OBJ) $(BIN) $(SHARED)
+
+.PHONY: all clean install uninstall
 
 #.SUFFIXES
 
