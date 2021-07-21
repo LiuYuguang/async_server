@@ -88,6 +88,10 @@ uint64_t localtime(){
 }
 
 static ssize_t _write_log(app_t *app,async_server_t *server){
+    if(server->log_file==NULL || server->write_log == NULL){
+        return -1;
+    }
+
     static char buf[512] = {0},*p;
     static int len;
     memset(buf,0,sizeof(buf));
@@ -886,7 +890,7 @@ async_server_t* server_create(){
 }
 
 ssize_t server_set_id_file(async_server_t* server,const char *file_name){
-    if(server == NULL){
+    if(server == NULL || file_name==NULL){
         return -1;
     }
 
@@ -912,7 +916,7 @@ ssize_t server_set_id_file(async_server_t* server,const char *file_name){
 }
 
 ssize_t server_set_log_file(async_server_t* server,const char *file_name,ssize_t (*write_log)(const char* file_name,const void *buf, size_t n)){
-    if(server == NULL){
+    if(server == NULL||file_name==NULL||write_log==NULL){
         return -1;
     }
     if(server->log_file != NULL){
