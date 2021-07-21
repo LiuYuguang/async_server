@@ -59,7 +59,7 @@ int main(){
                 //完整一个包
                 local_protocol_data = (local_protocol_data_t *)(recvData+sizeof(uint16_t));
                 local_protocol_data_size = recvLen - sizeof(uint16_t) - sizeof(local_protocol_data_t);
-                //printf("id%lu, clock%lu, type%u, ipc_data_size%d\n",\
+                printf("id%lu, clock%lu, type%u, ipc_data_size%d\n",\
                     local_protocol_data->id,\
                     local_protocol_data->clock,\
                     local_protocol_data->data_type,\

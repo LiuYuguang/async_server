@@ -1054,6 +1054,34 @@ void server_destroy(async_server_t* server){
         return ;
     }
 
+    rbtree_node_t* node;
+    app_t *app;
+    node = rbtree_min(&server->id_rbtree,server->id_rbtree.root);
+    while(node != NULL){
+        app = rbtree_data(node,app_t,id_rbtree_node);
+        app->app_errno = ECONNABORTED;
+        app->app_close_timestamp = localtime();
+        app->app_status |= app_status_close;
+
+        _write_log(app,server);
+
+        //先获取下一个节点
+        node = rbtree_next(&server->id_rbtree,&app->id_rbtree_node);
+        //删除epoll事件
+        epoll_ctl(server->epfd,EPOLL_CTL_DEL,app->app_fd,NULL);
+        //删除时间
+        rbtree_delete(&server->timer_rbtree,&app->timer_rbtree_node);
+        //删除id
+        rbtree_delete(&server->id_rbtree,&app->id_rbtree_node);
+        //删除队列
+        queue_remove(&app->task_worker_queue_node);
+        //释放buf
+        free(app->app_buf);
+        //关闭fd
+        close(app->app_fd);
+        free(app);
+    }
+
     close(server->epfd);
     close(server->dummyfd);
 
@@ -1146,8 +1174,10 @@ ssize_t add_remote_sockets_http(async_server_t* server, struct sockaddr *addr, s
     app->app_status = app_status_read;
     app->app_read_handler = accept_http_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = 0;
+    app->app_read_timestamp = localtime();
     app->app_write_timestamp = 0;
+    app->app_wait_timestamp = 0;
+    app->app_close_timestamp = 0;
 
     app->app_buf = NULL;
     app->app_buf_len = 0;
@@ -1159,8 +1189,9 @@ ssize_t add_remote_sockets_http(async_server_t* server, struct sockaddr *addr, s
     //添加id
     app->id_rbtree_node.key = server->id++;
     rbtree_insert(&server->id_rbtree,&app->id_rbtree_node);
-
+    //不加入timer
     rbtree_node_init(&app->timer_rbtree_node);
+    //不加入queue
     queue_init(&app->task_worker_queue_node);
     return 0;
 }
@@ -1202,8 +1233,10 @@ ssize_t add_remote_sockets_iso8583(async_server_t* server, struct sockaddr *addr
     app->app_status = app_status_read;
     app->app_read_handler = accept_iso8583_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = 0;
+    app->app_read_timestamp = localtime();
     app->app_write_timestamp = 0;
+    app->app_wait_timestamp = 0;
+    app->app_close_timestamp = 0;
 
     app->app_buf = NULL;
     app->app_buf_len = 0;
@@ -1212,10 +1245,12 @@ ssize_t add_remote_sockets_iso8583(async_server_t* server, struct sockaddr *addr
     app->app_read_timeout = read_timeout;
     app->app_write_timeout = write_timeout;
 
+    //添加id
     app->id_rbtree_node.key = server->id++;
     rbtree_insert(&server->id_rbtree,&app->id_rbtree_node);
-
+    //不加入timer
     rbtree_node_init(&app->timer_rbtree_node);
+    //不加入queue
     queue_init(&app->task_worker_queue_node);
     return 0;
 }
@@ -1257,8 +1292,10 @@ ssize_t add_local_sockets(async_server_t* server, struct sockaddr *addr, socklen
     app->app_status = app_status_read;
     app->app_read_handler = accept_local_protocol_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = 0;
+    app->app_read_timestamp = localtime();
     app->app_write_timestamp = 0;
+    app->app_wait_timestamp = 0;
+    app->app_close_timestamp = 0;
 
     app->app_buf = NULL;
     app->app_buf_len = 0;
@@ -1267,10 +1304,12 @@ ssize_t add_local_sockets(async_server_t* server, struct sockaddr *addr, socklen
     app->app_read_timeout = read_timeout;
     app->app_write_timeout = write_timeout;
 
+    //添加id
     app->id_rbtree_node.key = server->id++;
     rbtree_insert(&server->id_rbtree,&app->id_rbtree_node);
-
+    //不加入timer
     rbtree_node_init(&app->timer_rbtree_node);
+    //不加入queue
     queue_init(&app->task_worker_queue_node);
     return 0;
 }
