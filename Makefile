@@ -23,7 +23,7 @@ async_server_demo: async_server_demo.o async_server.o http_parser.o iso8583_pars
 echo_server_demo: echo_server_demo.o local_protocol.o
 	$(CC) -o $@ $^
 
-libasync_server.so: async_server_demo.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
+libasync_server.so: async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
 	$(CC) -o $@ $^ -shared
 
 $(OBJ): obj/%.o : src/%.c
