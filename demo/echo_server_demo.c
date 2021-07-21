@@ -11,7 +11,7 @@
 
 #include <assert.h>
 
-#include "local_protocol.h"
+#include "async_server.h"
 
 #define BUFFER_LENGTH 8192
 

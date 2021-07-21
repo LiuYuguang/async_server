@@ -1,4 +1,4 @@
-CFLAGS       = -O -DDEBUG
+CFLAGS       = -O -fPIC
 INC          = -I./include
 CC           = gcc
 
@@ -10,20 +10,13 @@ LIBRARY_PATH ?= lib
 INSTALL_INCLUDE_PATH = $(DESTDIR)$(PREFIX)/$(INCLUDE_PATH)
 INSTALL_LIBRARY_PATH = $(DESTDIR)$(PREFIX)/$(LIBRARY_PATH)
 
-BIN     = async_server_demo echo_server_demo
 SHARED  = libasync_server.so
 SRC     = $(wildcard src/*.c)
 OBJ     = $(patsubst src/%.c, obj/%.o, $(SRC))
 
-all: $(BIN) $(SHARED)
+all: $(SHARED)
 
-async_server_demo: async_server_demo.o async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
-	$(CC) -o $@ $^
-
-echo_server_demo: echo_server_demo.o local_protocol.o
-	$(CC) -o $@ $^
-
-libasync_server.so: async_server.o http_parser.o iso8583_parser.o local_protocol.o rbtree.o
+libasync_server.so: async_server.o http_parser.o iso8583_parser.o rbtree.o
 	$(CC) -o $@ $^ -shared
 
 $(OBJ): obj/%.o : src/%.c
@@ -39,7 +32,7 @@ uninstall:
 	$(RM) $(INSTALL_LIBRARY_PATH)/$(SHARED)
 
 clean:
-	-rm $(OBJ) $(BIN) $(SHARED)
+	-rm $(OBJ) $(SHARED)
 
 .PHONY: all clean install uninstall
 
