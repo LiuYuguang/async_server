@@ -25,6 +25,8 @@
 #define BUF_MIN (1<<8)  //256
 #define BUF_MAX (1<<15) //32768
 
+#define BACKLOG 512
+
 //对于remote, 流程为read->wait(queue write)->wait(queue read)->write
 //对于local, 流程为read/write
 enum app_status_t{
@@ -269,7 +271,7 @@ static int accept_iso8583_cb(app_t *app,async_server_t *server){
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
     int i;
-    for(i=0;i<10;i++){
+    for(i=0;i<BACKLOG;i++){
         
         sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
         if(sockfd < 0){
@@ -524,7 +526,7 @@ static int accept_http_cb(app_t *app,async_server_t *server){
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
     int i;
-    for(i=0;i<10;i++){
+    for(i=0;i<BACKLOG;i++){
  
         sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
         if(sockfd < 0){
@@ -1202,7 +1204,7 @@ int create_bind_socket_nonblock(struct sockaddr *addr,socklen_t len){
         return -1;
     }
 
-    if(listen(fd,5) == -1){
+    if(listen(fd,BACKLOG) == -1){
         close(fd);
         return -1;
     } 
