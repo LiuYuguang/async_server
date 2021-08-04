@@ -14,6 +14,7 @@
 #include <signal.h>     //for signal
 #include <errno.h>      //for E*
 #include <sys/time.h>   //for gettimeofday
+#include <time.h>       //for struct tm
 
 #include "async_server.h"
 #include "rbtree.h"
@@ -82,7 +83,7 @@ struct async_server_s{
     ssize_t (*write_log)(const char* file_name,const void *buf, size_t n);
 };
 
-uint64_t localtime(){
+static uint64_t localtime_new(){
     struct timeval tv;
     gettimeofday(&tv,NULL);
     return tv.tv_sec*1000 + tv.tv_usec/1000;
@@ -93,11 +94,17 @@ static ssize_t _write_log(app_t *app,async_server_t *server){
         return -1;
     }
 
-    static char buf[512] = {0},*p;
-    static int len;
-    memset(buf,0,sizeof(buf));
+    char buf[512] = {0},*p;
+    int len;
+    struct timeval tv;
+	struct tm tm_time;
+    gettimeofday(&tv, NULL);
+    localtime_r(&tv.tv_sec,&tm_time);
+    len = snprintf(buf, sizeof(buf)-1, "%04d-%02d-%02d %02d:%02d:%02d.%06ld [INFO] - ",
+        tm_time.tm_year+1900,tm_time.tm_mon+1,tm_time.tm_mday, 
+        tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec, tv.tv_usec);
 
-    p = buf;
+    p = buf + len;
     len = sprintf(p,"id[%lu] errno[%d][%s]line[%d]",app->id_rbtree_node.key,app->app_errno,strerror(app->app_errno),app->app_errno_line);
     p += len;
 
@@ -128,7 +135,7 @@ static ssize_t _write_log(app_t *app,async_server_t *server){
 }
 
 // --------------iso8583----------------------------
-int recv_iso8583_cb(app_t *app,async_server_t *server){
+static int recv_iso8583_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -140,7 +147,7 @@ int recv_iso8583_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
@@ -161,7 +168,7 @@ int recv_iso8583_cb(app_t *app,async_server_t *server){
 
             //更新状态
             app->app_status = app_status_wait;
-            app->app_wait_timestamp = localtime();
+            app->app_wait_timestamp = localtime_new();
 
             //重新设置超时时间
             rbtree_delete(&server->timer_rbtree,&app->timer_rbtree_node);
@@ -196,7 +203,7 @@ int recv_iso8583_cb(app_t *app,async_server_t *server){
         app->app_errno = errno;
         app->app_errno_line = __LINE__;
         app->app_status |= app_status_close;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         return -1;
     }else{
         if(errno == EINTR){
@@ -211,13 +218,13 @@ int recv_iso8583_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int send_iso8583_cb(app_t *app,async_server_t *server){
+static int send_iso8583_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -227,7 +234,7 @@ int send_iso8583_cb(app_t *app,async_server_t *server){
     if(len > 0){
         //发送完毕
         app->app_errno =0;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         app->app_status |= app_status_close;
         return 0;
     }else{
@@ -241,19 +248,19 @@ int send_iso8583_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }else{
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int accept_iso8583_cb(app_t *app,async_server_t *server){
+static int accept_iso8583_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -261,111 +268,120 @@ int accept_iso8583_cb(app_t *app,async_server_t *server){
     int sockfd;
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
-
-    sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
-    if(sockfd < 0){
-        if(errno == EINTR){
-            //被信号中断, 下次继续读
-            return -1;
-        }else if(errno == ENFILE || errno == EMFILE){
-            //fd不够分配，应该close
-            //LOG_ERROR("run out of file descriptors %d,%s",errno,strerror(errno));
-            close(server->dummyfd);
-            sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
-            if(sockfd >= 0){
-                close(sockfd);
+    int i;
+    for(i=0;i<10;i++){
+        
+        sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
+        if(sockfd < 0){
+            if(errno == EINTR){
+                //被信号中断, 下次继续读
+                //return -1;
+                continue;
+            }else if(errno == ENFILE || errno == EMFILE){
+                //fd不够分配，应该close
+                //LOG_ERROR("run out of file descriptors %d,%s",errno,strerror(errno));
+                close(server->dummyfd);
+                sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
+                if(sockfd >= 0){
+                    close(sockfd);
+                }
+                server->dummyfd = open("/dev/null",O_RDONLY|O_CLOEXEC);
+                //return -1;
+                continue;
+            }else if(errno == EAGAIN || errno == EWOULDBLOCK){
+                //数据未准备好, 下次继续读
+                return -1;
+            }else{
+                //LOG_ERROR("%d,%s",errno,strerror(errno));
             }
-            server->dummyfd = open("/dev/null",O_RDONLY|O_CLOEXEC);
             return -1;
-        }else if(errno == EAGAIN || errno == EWOULDBLOCK){
-            //数据未准备好, 下次继续读
-            return -1;
-        }else{
-            //LOG_ERROR("%d,%s",errno,strerror(errno));
         }
-        return -1;
-    }
 
-    //非阻塞
-    int flag = fcntl(sockfd,F_GETFL);
-    if(flag == -1){
-        close(sockfd);
-        return -1;
-    }
-
-    if(!(flag & O_NONBLOCK)){
-        if(fcntl(sockfd,F_SETFL,flag | O_NONBLOCK) == -1){
+        //非阻塞
+        int flag = fcntl(sockfd,F_GETFL);
+        if(flag == -1){
             close(sockfd);
-            return -1;
+            //return -1;
+            continue;
         }
-    }
 
-    app_t *app_sock = malloc(sizeof(app_t));
-    if(app_sock == NULL){
-        close(sockfd);
-        return -1;
-    }
-
-    app_sock->app_buf_len = 0;
-    app_sock->app_buf_cap = BUF_MIN;
-    app_sock->app_buf = malloc(app_sock->app_buf_cap);
-    if(app_sock->app_buf == NULL){
-        close(sockfd);
-        return -1;
-    }
-
-    struct epoll_event ev = {0,{0}};
-    int opt = EPOLL_CTL_ADD;
-    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
-    ev.data.ptr = app_sock;
-
-    if(epoll_ctl(server->epfd,opt,sockfd,&ev) == -1){
-        if(errno == EPERM){
-        }else if(errno == ENOENT){
-        }else if(errno == EEXIST){
+        if(!(flag & O_NONBLOCK)){
+            if(fcntl(sockfd,F_SETFL,flag | O_NONBLOCK) == -1){
+                close(sockfd);
+                //return -1;
+                continue;
+            }
         }
-        close(sockfd);
-        free(app_sock->app_buf);
-        free(app_sock);
-        return -1;
+
+        app_t *app_sock = malloc(sizeof(app_t));
+        if(app_sock == NULL){
+            close(sockfd);
+            //return -1;
+            continue;
+        }
+
+        app_sock->app_buf_len = 0;
+        app_sock->app_buf_cap = BUF_MIN;
+        app_sock->app_buf = malloc(app_sock->app_buf_cap);
+        if(app_sock->app_buf == NULL){
+            close(sockfd);
+            //return -1;
+            continue;
+        }
+
+        struct epoll_event ev = {0,{0}};
+        int opt = EPOLL_CTL_ADD;
+        ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+        ev.data.ptr = app_sock;
+
+        if(epoll_ctl(server->epfd,opt,sockfd,&ev) == -1){
+            if(errno == EPERM){
+            }else if(errno == ENOENT){
+            }else if(errno == EEXIST){
+            }
+            close(sockfd);
+            free(app_sock->app_buf);
+            free(app_sock);
+            //return -1;
+            continue;
+        }
+
+        app_sock->app_fd = sockfd;
+        app_sock->app_data_type = data_type_iso8583;
+        app_sock->app_status = app_status_read;
+        app_sock->app_errno = 0;
+        app_sock->app_errno_line = 0;
+        app_sock->app_read_handler = recv_iso8583_cb;
+        app_sock->app_write_handler = send_iso8583_cb;
+
+        app_sock->app_read_timestamp = localtime_new();
+        app_sock->app_write_timestamp = 0;
+        app_sock->app_wait_timestamp = 0;
+        app_sock->app_close_timestamp = 0;
+        
+        app_sock->app_read_timeout = app->app_read_timeout;
+        app_sock->app_write_timeout = app->app_write_timeout;
+
+        iso8583_parser_init(&app_sock->app_parser.iso8583);
+
+        //添加id
+        app_sock->id_rbtree_node.key = server->id++;
+        rbtree_insert(&server->id_rbtree,&app_sock->id_rbtree_node);
+        //更新超时时间
+        if(app_sock->app_read_timeout == -1)
+            app_sock->timer_rbtree_node.key = -1;
+        else
+            app_sock->timer_rbtree_node.key = app_sock->app_read_timestamp + app_sock->app_read_timeout;
+        rbtree_insert(&server->timer_rbtree,&app_sock->timer_rbtree_node);
+        //初始化队列
+        queue_init(&app_sock->task_worker_queue_node);
     }
-
-    app_sock->app_fd = sockfd;
-    app_sock->app_data_type = data_type_iso8583;
-    app_sock->app_status = app_status_read;
-    app_sock->app_errno = 0;
-    app_sock->app_errno_line = 0;
-    app_sock->app_read_handler = recv_iso8583_cb;
-    app_sock->app_write_handler = send_iso8583_cb;
-
-    app_sock->app_read_timestamp = localtime();
-    app_sock->app_write_timestamp = 0;
-    app_sock->app_wait_timestamp = 0;
-    app_sock->app_close_timestamp = 0;
-    
-    app_sock->app_read_timeout = app->app_read_timeout;
-    app_sock->app_write_timeout = app->app_write_timeout;
-
-    iso8583_parser_init(&app_sock->app_parser.iso8583);
-
-    //添加id
-    app_sock->id_rbtree_node.key = server->id++;
-    rbtree_insert(&server->id_rbtree,&app_sock->id_rbtree_node);
-    //更新超时时间
-    if(app_sock->app_read_timeout == -1)
-        app_sock->timer_rbtree_node.key = -1;
-    else
-        app_sock->timer_rbtree_node.key = app_sock->app_read_timestamp + app_sock->app_read_timeout;
-    rbtree_insert(&server->timer_rbtree,&app_sock->timer_rbtree_node);
-    //初始化队列
-    queue_init(&app_sock->task_worker_queue_node);
-
     return 0;
 }
 // --------------iso8583----------------------------
 
 // --------------http----------------------------
-int recv_http_cb(app_t *app,async_server_t *server){
+static int recv_http_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -377,7 +393,7 @@ int recv_http_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
@@ -391,7 +407,7 @@ int recv_http_cb(app_t *app,async_server_t *server){
             app->app_errno = ECONNABORTED;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
         
@@ -406,7 +422,7 @@ int recv_http_cb(app_t *app,async_server_t *server){
 
             //更新状态
             app->app_status = app_status_wait;
-            app->app_wait_timestamp = localtime();
+            app->app_wait_timestamp = localtime_new();
             
             //重新设置超时时间
             rbtree_delete(&server->timer_rbtree,&app->timer_rbtree_node);
@@ -442,7 +458,7 @@ int recv_http_cb(app_t *app,async_server_t *server){
         app->app_errno = errno;
         app->app_errno_line = __LINE__;
         app->app_status |= app_status_close;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         return -1;
     }else{
         if(errno == EINTR){
@@ -457,13 +473,13 @@ int recv_http_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int send_http_cb(app_t *app,async_server_t *server){
+static int send_http_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -473,7 +489,7 @@ int send_http_cb(app_t *app,async_server_t *server){
     if(len > 0){
         //发送完毕
         app->app_errno =0;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         app->app_status |= app_status_close;
         return 0;
     }else{
@@ -487,19 +503,19 @@ int send_http_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }else{
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int accept_http_cb(app_t *app,async_server_t *server){
+static int accept_http_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -507,111 +523,120 @@ int accept_http_cb(app_t *app,async_server_t *server){
     int sockfd;
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
-
-    sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
-    if(sockfd < 0){
-        if(errno == EINTR){
-            //被信号中断, 下次继续读
-            return -1;
-        }else if(errno == ENFILE || errno == EMFILE){
-            //fd不够分配，应该close
-            //LOG_ERROR("run out of file descriptors %d,%s",errno,strerror(errno));
-            close(server->dummyfd);
-            sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
-            if(sockfd >= 0){
-                close(sockfd);
+    int i;
+    for(i=0;i<10;i++){
+ 
+        sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
+        if(sockfd < 0){
+            if(errno == EINTR){
+                //被信号中断, 下次继续读
+                //return -1;
+                continue;
+            }else if(errno == ENFILE || errno == EMFILE){
+                //fd不够分配，应该close
+                //LOG_ERROR("run out of file descriptors %d,%s",errno,strerror(errno));
+                close(server->dummyfd);
+                sockfd = accept(app->app_fd,(struct sockaddr*)&addr,&addr_len);
+                if(sockfd >= 0){
+                    close(sockfd);
+                }
+                server->dummyfd = open("/dev/null",O_RDONLY | O_CLOEXEC);
+                //return -1;
+                continue;
+            }else if(errno == EAGAIN || errno == EWOULDBLOCK){
+                //数据未准备好, 下次继续读
+                return -1;
+            }else{
+                //LOG_ERROR("%d,%s",errno,strerror(errno));
             }
-            server->dummyfd = open("/dev/null",O_RDONLY | O_CLOEXEC);
             return -1;
-        }else if(errno == EAGAIN || errno == EWOULDBLOCK){
-            //数据未准备好, 下次继续读
-            return -1;
-        }else{
-            //LOG_ERROR("%d,%s",errno,strerror(errno));
         }
-        return -1;
-    }
 
-    //非阻塞
-    int flag = fcntl(sockfd,F_GETFL);
-    if(flag == -1){
-        close(sockfd);
-        return -1;
-    }
-
-    if(!(flag & O_NONBLOCK)){
-        if(fcntl(sockfd,F_SETFL,flag | O_NONBLOCK) == -1){
+        //非阻塞
+        int flag = fcntl(sockfd,F_GETFL);
+        if(flag == -1){
             close(sockfd);
-            return -1;
+            //return -1;
+            continue;
         }
-    }
-    
-    app_t *app_sock = malloc(sizeof(app_t));
-    if(app_sock == NULL){
-        close(sockfd);
-        return -1;
-    }
-    
-    app_sock->app_buf_len = 0;
-    app_sock->app_buf_cap = BUF_MIN;
-    app_sock->app_buf = malloc(app_sock->app_buf_cap);
-    if(app_sock->app_buf == NULL){
-        close(sockfd);
-        return -1;
-    }
-    
-    struct epoll_event ev = {0,{0}};
-    int opt = EPOLL_CTL_ADD;
-    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
-    ev.data.ptr = app_sock;
 
-    if(epoll_ctl(server->epfd,opt,sockfd,&ev) == -1){
-        if(errno == EPERM){
-        }else if(errno == ENOENT){
-        }else if(errno == EEXIST){
+        if(!(flag & O_NONBLOCK)){
+            if(fcntl(sockfd,F_SETFL,flag | O_NONBLOCK) == -1){
+                close(sockfd);
+                //return -1;
+                continue;
+            }
         }
-        close(sockfd);
-        free(app_sock->app_buf);
-        free(app_sock);
-        return -1;
+        
+        app_t *app_sock = malloc(sizeof(app_t));
+        if(app_sock == NULL){
+            close(sockfd);
+            //return -1;
+            continue;
+        }
+        
+        app_sock->app_buf_len = 0;
+        app_sock->app_buf_cap = BUF_MIN;
+        app_sock->app_buf = malloc(app_sock->app_buf_cap);
+        if(app_sock->app_buf == NULL){
+            close(sockfd);
+            //return -1;
+            continue;
+        }
+        
+        struct epoll_event ev = {0,{0}};
+        int opt = EPOLL_CTL_ADD;
+        ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+        ev.data.ptr = app_sock;
+
+        if(epoll_ctl(server->epfd,opt,sockfd,&ev) == -1){
+            if(errno == EPERM){
+            }else if(errno == ENOENT){
+            }else if(errno == EEXIST){
+            }
+            close(sockfd);
+            free(app_sock->app_buf);
+            free(app_sock);
+            //return -1;
+            continue;
+        }
+        
+        app_sock->app_fd = sockfd;
+        app_sock->app_data_type = data_type_http;
+        app_sock->app_status = app_status_read;
+        app_sock->app_errno = 0;
+        app_sock->app_errno_line = 0;
+        app_sock->app_read_handler = recv_http_cb;
+        app_sock->app_write_handler = send_http_cb;
+
+        app_sock->app_read_timestamp = localtime_new();
+        app_sock->app_write_timestamp = 0;
+        app_sock->app_wait_timestamp = 0;
+        app_sock->app_close_timestamp = 0;
+        
+        app_sock->app_read_timeout = app->app_read_timeout;
+        app_sock->app_write_timeout = app->app_write_timeout;
+
+        http_parser_init(&app_sock->app_parser.http,HTTP_REQUEST);
+
+        //添加id
+        app_sock->id_rbtree_node.key = server->id++;
+        rbtree_insert(&server->id_rbtree,&app_sock->id_rbtree_node);
+        //更新超时时间
+        if(app_sock->app_read_timeout == -1)
+            app_sock->timer_rbtree_node.key = -1;
+        else
+            app_sock->timer_rbtree_node.key = app_sock->app_read_timestamp + app_sock->app_read_timeout;
+        rbtree_insert(&server->timer_rbtree,&app_sock->timer_rbtree_node);
+        //初始化队列
+        queue_init(&app_sock->task_worker_queue_node);
     }
-    
-    app_sock->app_fd = sockfd;
-    app_sock->app_data_type = data_type_http;
-    app_sock->app_status = app_status_read;
-    app_sock->app_errno = 0;
-    app_sock->app_errno_line = 0;
-    app_sock->app_read_handler = recv_http_cb;
-    app_sock->app_write_handler = send_http_cb;
-
-    app_sock->app_read_timestamp = localtime();
-    app_sock->app_write_timestamp = 0;
-    app_sock->app_wait_timestamp = 0;
-    app_sock->app_close_timestamp = 0;
-    
-    app_sock->app_read_timeout = app->app_read_timeout;
-    app_sock->app_write_timeout = app->app_write_timeout;
-
-    http_parser_init(&app_sock->app_parser.http,HTTP_REQUEST);
-
-    //添加id
-    app_sock->id_rbtree_node.key = server->id++;
-    rbtree_insert(&server->id_rbtree,&app_sock->id_rbtree_node);
-    //更新超时时间
-    if(app_sock->app_read_timeout == -1)
-        app_sock->timer_rbtree_node.key = -1;
-    else
-        app_sock->timer_rbtree_node.key = app_sock->app_read_timestamp + app_sock->app_read_timeout;
-    rbtree_insert(&server->timer_rbtree,&app_sock->timer_rbtree_node);
-    //初始化队列
-    queue_init(&app_sock->task_worker_queue_node);
-    
     return 0;
 }
 // --------------http----------------------------
 
 // --------------local----------------------------
-int recv_local_protocol_cb(app_t *app,async_server_t *server){
+static int recv_local_protocol_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -623,7 +648,7 @@ int recv_local_protocol_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
@@ -666,12 +691,12 @@ int recv_local_protocol_cb(app_t *app,async_server_t *server){
                     epoll_ctl(server->epfd,opt,app_task->app_fd,&ev);
                     if(app_task->app_buf != NULL){
                         app_task->app_status = app_status_write;
-                        app_task->app_write_timestamp = localtime();
+                        app_task->app_write_timestamp = localtime_new();
                     }else{
                         app_task->app_errno = errno;
                         app_task->app_errno_line = __LINE__;
                         app_task->app_status = app_status_close;
-                        app_task->app_write_timestamp = localtime();
+                        app_task->app_write_timestamp = localtime_new();
                         app_task->app_close_timestamp = app_task->app_write_timestamp;
                     }
                 }
@@ -688,7 +713,7 @@ int recv_local_protocol_cb(app_t *app,async_server_t *server){
         app->app_errno = errno;
         app->app_errno_line = __LINE__;
         app->app_status |= app_status_close;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         return -1;
     }else{
         if(errno == EINTR){
@@ -703,15 +728,15 @@ int recv_local_protocol_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int send_local_protocol_cb(app_t *app,async_server_t *server){
-    static char buf[BUF_MAX] = {0};
-    static size_t buf_len = 0;
+static int send_local_protocol_cb(app_t *app,async_server_t *server){
+    char *buf=NULL;
+    size_t buf_len = 0;
 
     if(app->app_status&app_status_close){
         return -1;
@@ -728,6 +753,17 @@ int send_local_protocol_cb(app_t *app,async_server_t *server){
         return 0;
     }
     
+    buf = malloc(BUF_MAX);
+    if(buf == NULL){
+        //内存不够, 暂时不取任务
+        struct epoll_event ev = {0,{0}};
+        int opt = EPOLL_CTL_MOD;
+        ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+        ev.data.ptr = app;
+        epoll_ctl(server->epfd,opt,app->app_fd,&ev);
+        app->app_status = app_status_read;
+        return 0;
+    }
     //取任务队列头结点
     queue_t *task = queue_head(&server->task);
     app_t * app_task = queue_data(task,app_t,task_worker_queue_node);
@@ -745,7 +781,7 @@ int send_local_protocol_cb(app_t *app,async_server_t *server){
     buf_len = sizeof(uint16_t)+sizeof(local_protocol_data_t)+app_task->app_buf_len;
     
     len = send(app->app_fd,buf,buf_len,0);
-    
+    free(buf);
     if(len > 0){
         //发送成功，任务从队列中取出
         queue_remove(&app_task->task_worker_queue_node);
@@ -766,19 +802,19 @@ int send_local_protocol_cb(app_t *app,async_server_t *server){
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }else{
             app->app_errno = errno;
             app->app_errno_line = __LINE__;
             app->app_status |= app_status_close;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             return -1;
         }
     }
 }
 
-int accept_local_protocol_cb(app_t *app,async_server_t *server){
+static int accept_local_protocol_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
     }
@@ -863,7 +899,7 @@ int accept_local_protocol_cb(app_t *app,async_server_t *server){
     app_sock->app_read_handler = recv_local_protocol_cb;
     app_sock->app_write_handler = send_local_protocol_cb;
 
-    app_sock->app_read_timestamp = localtime();
+    app_sock->app_read_timestamp = localtime_new();
     app_sock->app_write_timestamp = app_sock->app_read_timestamp;
     app_sock->app_wait_timestamp = 0;
     app_sock->app_close_timestamp = 0;
@@ -973,7 +1009,7 @@ int server_start_loop(async_server_t* server, int maxapps){
     }
 
     for(;;){
-        ltime = localtime();
+        ltime = localtime_new();
 
         //获取最小等待时间
         node = rbtree_min(&server->timer_rbtree,server->timer_rbtree.root);
@@ -981,7 +1017,7 @@ int server_start_loop(async_server_t* server, int maxapps){
             app = rbtree_data(node,app_t,timer_rbtree_node);
             app->app_errno = ETIME;
             app->app_errno_line = __LINE__;
-            app->app_close_timestamp = localtime();
+            app->app_close_timestamp = localtime_new();
             app->app_status |= app_status_close;
             
             _write_log(app,server);
@@ -1038,7 +1074,7 @@ int server_start_loop(async_server_t* server, int maxapps){
             if(server->ev_events[i].events & EPOLLERR){
                 app->app_errno = errno;
                 app->app_errno_line = __LINE__;
-                app->app_close_timestamp = localtime();
+                app->app_close_timestamp = localtime_new();
                 app->app_status |= app_status_close;
             }
             
@@ -1046,7 +1082,7 @@ int server_start_loop(async_server_t* server, int maxapps){
                 //对端关闭
                 app->app_errno = errno;
                 app->app_errno_line = __LINE__;
-                app->app_close_timestamp = localtime();
+                app->app_close_timestamp = localtime_new();
                 app->app_status |= app_status_close;
             }
 
@@ -1054,7 +1090,7 @@ int server_start_loop(async_server_t* server, int maxapps){
                 //对端调用shutdown write
                 app->app_errno = errno;
                 app->app_errno_line = __LINE__;
-                app->app_close_timestamp = localtime();
+                app->app_close_timestamp = localtime_new();
                 app->app_status |= app_status_close;
             }
 
@@ -1096,7 +1132,7 @@ void server_destroy(async_server_t* server){
         app = rbtree_data(node,app_t,id_rbtree_node);
         app->app_errno = ECONNABORTED;
         app->app_errno_line = __LINE__;
-        app->app_close_timestamp = localtime();
+        app->app_close_timestamp = localtime_new();
         app->app_status |= app_status_close;
 
         _write_log(app,server);
@@ -1194,7 +1230,7 @@ int add_remote_sockets_http(async_server_t* server, struct sockaddr *addr, sockl
 
     struct epoll_event ev = {0,{0}};
     int opt = EPOLL_CTL_ADD;
-    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP|EPOLLET;//改为边缘触发
     ev.data.ptr = app;
 
     if(epoll_ctl(server->epfd,opt,fd,&ev) == -1){
@@ -1211,7 +1247,7 @@ int add_remote_sockets_http(async_server_t* server, struct sockaddr *addr, sockl
     app->app_status = app_status_read;
     app->app_read_handler = accept_http_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = localtime();
+    app->app_read_timestamp = localtime_new();
     app->app_write_timestamp = 0;
     app->app_wait_timestamp = 0;
     app->app_close_timestamp = 0;
@@ -1253,7 +1289,7 @@ int add_remote_sockets_iso8583(async_server_t* server, struct sockaddr *addr, so
 
     struct epoll_event ev = {0,{0}};
     int opt = EPOLL_CTL_ADD;
-    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+    ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP|EPOLLET;//改为边缘触发
     ev.data.ptr = app;
 
     if(epoll_ctl(server->epfd,opt,fd,&ev) == -1){
@@ -1270,7 +1306,7 @@ int add_remote_sockets_iso8583(async_server_t* server, struct sockaddr *addr, so
     app->app_status = app_status_read;
     app->app_read_handler = accept_iso8583_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = localtime();
+    app->app_read_timestamp = localtime_new();
     app->app_write_timestamp = 0;
     app->app_wait_timestamp = 0;
     app->app_close_timestamp = 0;
@@ -1329,7 +1365,7 @@ int add_local_sockets(async_server_t* server, struct sockaddr *addr, socklen_t l
     app->app_status = app_status_read;
     app->app_read_handler = accept_local_protocol_cb;
     app->app_write_handler = NULL;
-    app->app_read_timestamp = localtime();
+    app->app_read_timestamp = localtime_new();
     app->app_write_timestamp = 0;
     app->app_wait_timestamp = 0;
     app->app_close_timestamp = 0;
