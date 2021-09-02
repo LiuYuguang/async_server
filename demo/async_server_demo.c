@@ -29,7 +29,7 @@ int main(){
     async_server_t* server = server_create();
 
     server_set_id_file(server,"./id_file");
-    server_set_log_file(server,"./log",write_log);
+    //server_set_log_file(server,"./log",write_log);
 
     struct sockaddr_in sin;
     sin.sin_family = AF_INET;

@@ -383,6 +383,25 @@ static int accept_iso8583_cb(app_t *app,async_server_t *server){
 // --------------iso8583----------------------------
 
 // --------------http----------------------------
+static int on_info_default(http_parser* p) {
+  return 0;
+}
+
+static int on_data_default(http_parser* p, const char *at, size_t length) {
+  return 0;
+}
+
+static http_parser_settings settings_default = {
+  .on_message_begin = on_info_default,
+  .on_headers_complete = on_info_default,
+  .on_message_complete = on_info_default,
+  .on_header_field = on_data_default,
+  .on_header_value = on_data_default,
+  .on_url = on_data_default,
+  .on_status = on_data_default,
+  .on_body = on_data_default
+};
+
 static int recv_http_cb(app_t *app,async_server_t *server){
     if(app->app_status&app_status_close){
         return -1;
@@ -402,7 +421,7 @@ static int recv_http_cb(app_t *app,async_server_t *server){
     
     ssize_t len = recv(app->app_fd,app->app_buf+app->app_buf_len, app->app_buf_cap-app->app_buf_len,0);
     if(len > 0){
-        len = http_parser_execute(&app->app_parser.http, &settings_default, app->app_buf+app->app_buf_len,len);
+        len = http_parser_execute(&app->app_parser.http, &settings_default, (char*)app->app_buf+app->app_buf_len,len);
         app->app_buf_len += len;
         
         if(app->app_parser.http.http_errno != HPE_OK){
@@ -736,6 +755,7 @@ static int recv_local_protocol_cb(app_t *app,async_server_t *server){
     }
 }
 
+/*
 static int send_local_protocol_cb(app_t *app,async_server_t *server){
     char *buf=NULL;
     size_t buf_len = 0;
@@ -787,6 +807,93 @@ static int send_local_protocol_cb(app_t *app,async_server_t *server){
     if(len > 0){
         //发送成功，任务从队列中取出
         queue_remove(&app_task->task_worker_queue_node);
+
+        //将worker放到队列尾
+        queue_remove(&app->task_worker_queue_node);
+        queue_insert_tail(&server->worker,&app->task_worker_queue_node);
+
+        return 0;
+    }else{
+        if(errno == EAGAIN){
+            //写缓存满，等待下一次的写操作
+            return 0;
+        }else if(errno == EINTR){
+            //被信号中断，等待下一次的写操作
+            return 0;
+        }else if(errno == EPIPE){
+            app->app_errno = errno;
+            app->app_errno_line = __LINE__;
+            app->app_status |= app_status_close;
+            app->app_close_timestamp = localtime_new();
+            return -1;
+        }else{
+            app->app_errno = errno;
+            app->app_errno_line = __LINE__;
+            app->app_status |= app_status_close;
+            app->app_close_timestamp = localtime_new();
+            return -1;
+        }
+    }
+}
+*/
+static int send_local_protocol_cb(app_t *app,async_server_t *server){
+    char *buf=NULL,*p;
+    size_t buf_len = 0;
+
+    if(app->app_status&app_status_close){
+        return -1;
+    }
+    
+    if(queue_empty(&server->task)){
+        //任务队列为空，不再等待写事件，只保留读事件
+        struct epoll_event ev = {0,{0}};
+        int opt = EPOLL_CTL_MOD;
+        ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+        ev.data.ptr = app;
+        epoll_ctl(server->epfd,opt,app->app_fd,&ev);
+        app->app_status = app_status_read;
+        return 0;
+    }
+    
+    buf = malloc(BUF_MAX<<3);
+    if(buf == NULL){
+        //内存不够, 暂时不取任务
+        struct epoll_event ev = {0,{0}};
+        int opt = EPOLL_CTL_MOD;
+        ev.events = EPOLLIN|EPOLLERR|EPOLLHUP|EPOLLRDHUP;
+        ev.data.ptr = app;
+        epoll_ctl(server->epfd,opt,app->app_fd,&ev);
+        app->app_status = app_status_read;
+        return 0;
+    }
+    p = buf;
+    //取任务队列头结点
+    int i;
+    queue_t *task;
+    app_t *app_task;
+    ssize_t len;
+    local_protocol_data_t *local_protocol_data;
+    for(i=0,task=queue_head(&server->task);i<8&&task!=queue_sentinel(&server->task);i++,task=queue_next(task)){
+        app_task = queue_data(task,app_t,task_worker_queue_node);
+        local_protocol_data = (local_protocol_data_t *)(p + sizeof(uint16_t));
+        local_protocol_data->id = app_task->id_rbtree_node.key;
+        local_protocol_data->clock = app_task->app_read_timestamp;
+        local_protocol_data->data_type = app_task->app_data_type;
+        memcpy(local_protocol_data->data,app_task->app_buf,app_task->app_buf_len);
+        *(uint16_t*)p = htons(sizeof(local_protocol_data_t)+app_task->app_buf_len);
+        p += (sizeof(uint16_t)+sizeof(local_protocol_data_t)+app_task->app_buf_len);
+    }
+    buf_len = p-buf;
+    
+    len = send(app->app_fd,buf,buf_len,0);
+    free(buf);
+    if(len > 0){
+        //发送成功，任务从队列中取出
+        for(i=0,task=queue_head(&server->task);i<8&&task!=queue_sentinel(&server->task);i++){
+            app_task = queue_data(task,app_t,task_worker_queue_node);
+            task = queue_next(task);
+            queue_remove(&app_task->task_worker_queue_node);
+        }
 
         //将worker放到队列尾
         queue_remove(&app->task_worker_queue_node);

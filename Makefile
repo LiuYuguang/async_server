@@ -1,4 +1,4 @@
-CFLAGS       = -O -fPIC
+CFLAGS       = -O -fPIC -Wall
 INC          = -I./include
 CC           = gcc
 
@@ -19,8 +19,11 @@ all: $(SHARED)
 libasync_server.so: async_server.o http_parser.o iso8583_parser.o rbtree.o
 	$(CC) -o $@ $^ -shared
 
-$(OBJ): obj/%.o : src/%.c
+$(OBJ): obj/%.o : src/%.c obj
 	$(CC) -c $(CFLAGS) -o $@ $< $(INC)
+
+obj:
+	@mkdir $@
 
 install:
 	mkdir -p $(INSTALL_LIBRARY_PATH) $(INSTALL_INCLUDE_PATH)
@@ -33,6 +36,7 @@ uninstall:
 
 clean:
 	-rm $(OBJ) $(SHARED)
+	@rmdir obj
 
 .PHONY: all clean install uninstall
 

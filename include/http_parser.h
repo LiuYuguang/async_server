@@ -444,7 +444,7 @@ int http_body_is_final(const http_parser *parser);
 void http_parser_set_max_header_size(uint32_t size);
 
 
-
+/*
 static int on_info_default(http_parser* p) {
   return 0;
 }
@@ -463,7 +463,7 @@ static http_parser_settings settings_default = {
   .on_status = on_data_default,
   .on_body = on_data_default
 };
-
+*/
 int http_request_is_done(const http_parser *parser);
 int http_response_is_done(const http_parser *parser);
 
