@@ -14,12 +14,12 @@ SHARED  = libasync_server.so
 SRC     = $(wildcard src/*.c)
 OBJ     = $(patsubst src/%.c, obj/%.o, $(SRC))
 
-all: $(SHARED)
+all: obj $(SHARED)
 
 libasync_server.so: async_server.o http_parser.o iso8583_parser.o rbtree.o
 	$(CC) -o $@ $^ -shared
 
-$(OBJ): obj/%.o : src/%.c obj
+$(OBJ): obj/%.o : src/%.c
 	$(CC) -c $(CFLAGS) -o $@ $< $(INC)
 
 obj:
