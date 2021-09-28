@@ -53,7 +53,8 @@ int main(){
 
         len_parsed = 0;
         while(len_parsed < len){
-            len_parsed =  local_protocol_parser_execute(&parser,recvData+recvLen,len-recvLen);
+            // len_parsed =  local_protocol_parser_execute(&parser,recvData+recvLen,len-recvLen);
+            len_parsed =  local_protocol_parser_execute(&parser,recvData+recvLen,len);
             recvLen += len_parsed;
             if(local_protocol_parser_is_done(&parser)){
                 //完整一个包
@@ -81,7 +82,9 @@ int main(){
                 len -= len_parsed;
                 recvLen = 0;
                 len_parsed = 0;
+                continue;
             }
+            break;
         }
     }
 
