@@ -13,7 +13,6 @@ enum iso8583_state{
 typedef struct iso8583_parser_s iso8583_parser;
 struct iso8583_parser_s{
     enum iso8583_state state;
-    unsigned char length_n[2];
     uint16_t length;
 };
 

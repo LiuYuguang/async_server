@@ -1,4 +1,4 @@
-CFLAGS       = -O -fPIC -Wall
+CFLAGS       = -O3 -fPIC -Wall
 INC          = -I./include
 CC           = gcc
 

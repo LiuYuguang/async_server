@@ -14,13 +14,12 @@ size_t iso8583_parser_execute(iso8583_parser *parser,const void *data,size_t len
         switch (parser->state)
         {
             case s_iso8583_head_start:
-                parser->length_n[0] = *p;
+                parser->length = *p;
                 parser->state = s_iso8583_head_end;
                 break;
             case s_iso8583_head_end:
-                parser->length_n[1] = *p;
+                parser->length = (parser->length<<8) | *p;
                 parser->state = s_iso8583_body;
-                parser->length = ntohs(*(uint16_t*)parser->length_n);
                 break;
             case s_iso8583_body:
                 if(parser->length <= (const uint8_t *)data+len-p){

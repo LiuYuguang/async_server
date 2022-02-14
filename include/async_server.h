@@ -5,14 +5,20 @@
 #include <sys/types.h>   //for ssize_t
 #include <netinet/in.h>  //for struct sockaddr socklen_t
 
+#define SERVER_CACHE_SIZE 4096
+
+#define DATA_TYPE_HTTP 1
+#define DATA_TYPE_ISO8583 2
+#define DATA_TYPE_LOCAL 3
 
 typedef struct async_server_s async_server_t;
 
 /**
  * 创建async_server_t对象
+ * @param[in] cache_size >=SERVER_CACHE_SIZE
  * @return not NULL if successful, otherwise NULL
 */
-async_server_t* server_create();
+async_server_t* server_create(size_t cache_size);
 
 /**
  * 设置id文件, 在async_server开始时读取id, 结束后存储id
@@ -26,10 +32,9 @@ int server_set_id_file(async_server_t* server,const char *file_name);
  * 设置log文件和回调函数, async_server输出log的时候会调用
  * @param[in] server
  * @param[in] file_name log文件名
- * @param[in] write_log log回调函数
  * @return 0 if successful, otherwise an error occurred
 */
-int server_set_log_file(async_server_t* server,const char *file_name,ssize_t (*write_log)(const char* file_name,const void *buf, size_t n));
+int server_set_log_file(async_server_t* server,const char *file_name);
 
 /**
  * 运行server
@@ -80,17 +85,12 @@ int add_local_sockets(async_server_t* server, struct sockaddr *addr, socklen_t l
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 以下是自定义协议结构体
-enum data_type_t{
-    data_type_http,
-    data_type_iso8583,
-    data_type_local_protocol,
-};
 
 typedef struct local_protocol_data_s local_protocol_data_t;
 struct local_protocol_data_s{
     uint64_t id;
     uint64_t clock;
-    enum data_type_t data_type;
+    uint8_t data_type;
     uint8_t data[0];
 };
 
@@ -104,7 +104,6 @@ enum local_protocol_state{
 typedef struct local_protocol_parser_s local_protocol_parser;
 struct local_protocol_parser_s{
     enum local_protocol_state state;
-    unsigned char length_n[2];
     uint16_t length;
 };
 

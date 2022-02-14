@@ -1,4 +1,4 @@
-CFLAGS       = -O
+CFLAGS       = -O3
 INC          = 
 CC           = gcc
 LIB          = -lasync_server
