@@ -5,36 +5,19 @@
 #include <sys/types.h>   //for ssize_t
 #include <netinet/in.h>  //for struct sockaddr socklen_t
 
-#define SERVER_CACHE_SIZE 4096
-
 #define DATA_TYPE_HTTP 1
-#define DATA_TYPE_ISO8583 2
-#define DATA_TYPE_LOCAL 3
+#define DATA_TYPE_LOCAL 2
 
 typedef struct async_server_s async_server_t;
 
 /**
  * 创建async_server_t对象
- * @param[in] cache_size >=SERVER_CACHE_SIZE
+ * @param[in] file_name id文件名
+ * @param[in] file_name log文件名
+ * @param[in] cache_size
  * @return not NULL if successful, otherwise NULL
 */
-async_server_t* server_create(size_t cache_size);
-
-/**
- * 设置id文件, 在async_server开始时读取id, 结束后存储id
- * @param[in] server
- * @param[in] file_name id文件名
- * @return 0 if successful, otherwise an error occurred
-*/
-int server_set_id_file(async_server_t* server,const char *file_name);
-
-/**
- * 设置log文件和回调函数, async_server输出log的时候会调用
- * @param[in] server
- * @param[in] file_name log文件名
- * @return 0 if successful, otherwise an error occurred
-*/
-int server_set_log_file(async_server_t* server,const char *file_name);
+async_server_t* server_create(const char* id_file, const char * log_file, size_t cache_size);
 
 /**
  * 运行server
@@ -59,29 +42,7 @@ void server_destroy(async_server_t* server);
  * @param[in] write_timeout 写超时
  * @return 0 if successful, otherwise an error occurred
 */
-int add_remote_sockets_http(async_server_t* server, struct sockaddr *addr, socklen_t len, int read_timeout, int write_timeout);
-
-/**
- * 对外端口添加8583实例
- * @param[in] server
- * @param[in] addr
- * @param[in] len
- * @param[in] read_timeout 读超时
- * @param[in] write_timeout 写超时
- * @return 0 if successful, otherwise an error occurred
-*/
-int add_remote_sockets_iso8583(async_server_t* server, struct sockaddr *addr, socklen_t len, int read_timeout, int write_timeout);
-
-/**
- * 对内端口添加自定义协议实例
- * @param[in] server
- * @param[in] addr
- * @param[in] len
- * @param[in] read_timeout 读超时
- * @param[in] write_timeout 写超时
- * @return 0 if successful, otherwise an error occurred
-*/
-int add_local_sockets(async_server_t* server, struct sockaddr *addr, socklen_t len, int read_timeout, int write_timeout);
+int add_sockets(async_server_t* server, struct sockaddr *addr, socklen_t len, int timeout, uint8_t data_type);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 以下是自定义协议结构体

@@ -41,8 +41,6 @@ typedef __int32 int32_t;
 typedef unsigned __int32 uint32_t;
 typedef __int64 int64_t;
 typedef unsigned __int64 uint64_t;
-#elif (defined(__sun) || defined(__sun__)) && defined(__SunOS_5_9)
-#include <sys/inttypes.h>
 #else
 #include <stdint.h>
 #endif
@@ -227,6 +225,7 @@ enum flags
   , F_UPGRADE               = 1 << 5
   , F_SKIPBODY              = 1 << 6
   , F_CONTENTLENGTH         = 1 << 7
+  , F_TRANSFER_ENCODING     = 1 << 8  /* Never set in http_parser.flags */
   };
 
 
@@ -301,16 +300,11 @@ struct http_parser {
   unsigned int state : 7;        /* enum state from http_parser.c */
   unsigned int header_state : 7; /* enum header_state from http_parser.c */
   unsigned int index : 5;        /* index into current matcher */
-  unsigned int uses_transfer_encoding : 1; /* Transfer-Encoding header is present */
-  unsigned int allow_chunked_length : 1; /* Allow headers with both
-                                          * `Content-Length` and
-                                          * `Transfer-Encoding: chunked` set */
+  unsigned int extra_flags : 2;
   unsigned int lenient_http_headers : 1;
 
   uint32_t nread;          /* # bytes read in various scenarios */
-  uint64_t content_length; /* # bytes in body. `(uint64_t) -1` (all bits one)
-                            * if no Content-Length header.
-                            */
+  uint64_t content_length; /* # bytes in body (0 if no Content-Length header) */
 
   /** READ-ONLY **/
   unsigned short http_major;
@@ -443,29 +437,7 @@ int http_body_is_final(const http_parser *parser);
 /* Change the maximum header size provided at compile time. */
 void http_parser_set_max_header_size(uint32_t size);
 
-
-/*
-static int on_info_default(http_parser* p) {
-  return 0;
-}
-
-static int on_data_default(http_parser* p, const char *at, size_t length) {
-  return 0;
-}
-
-static http_parser_settings settings_default = {
-  .on_message_begin = on_info_default,
-  .on_headers_complete = on_info_default,
-  .on_message_complete = on_info_default,
-  .on_header_field = on_data_default,
-  .on_header_value = on_data_default,
-  .on_url = on_data_default,
-  .on_status = on_data_default,
-  .on_body = on_data_default
-};
-*/
-int http_request_is_done(const http_parser *parser);
-int http_response_is_done(const http_parser *parser);
+int http_request_is_done(const http_parser *parser);// 我加的
 
 #ifdef __cplusplus
 }
